@@ -1,0 +1,279 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+
+// Configuración WiFi
+const char* ssid = "IZZI-4EBC";
+const char* password = "g3bKby2hpJ9yXxC6Pn";
+
+// Crear servidor web en puerto 80
+ESP8266WebServer server(80);
+
+// Configuración GPS
+static const int RXPin = D1, TXPin = D2; // GPIO5 (D1) y GPIO4 (D2)
+static const uint32_t GPSBaud = 9600;
+
+SoftwareSerial ss(RXPin, TXPin);
+TinyGPSPlus gps;
+
+// Variables para datos GPS
+float latitud = 0.0;
+float longitud = 0.0;
+String fecha = "";
+String hora = "";
+int satelites = 0;
+float altitud = 0.0;
+float velocidad = 0.0;
+float curso = 0.0;
+
+// Tiempo máximo para esperar señal GPS (segundos)
+const int GPS_TIMEOUT = 180;
+
+void setup() {
+  Serial.begin(115200);
+  ss.begin(GPSBaud);
+  
+  // Conectar a WiFi
+  WiFi.begin(ssid, password);
+  Serial.println("\nConectando a WiFi...");
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  
+  Serial.println("\nWiFi conectado");
+  Serial.print("Dirección IP: ");
+  Serial.println(WiFi.localIP());
+  
+  // Configurar rutas del servidor web
+  server.on("/", handleRoot);
+  server.on("/data", handleData);
+  server.on("/map", handleMap);
+  
+  server.begin();
+  Serial.println("Servidor HTTP iniciado");
+
+  // Esperar señal GPS
+  Serial.println("Buscando señal de satélites...");
+  unsigned long startTime = millis();
+  bool gpsReady = false;
+  
+  while ((millis() - startTime) < (GPS_TIMEOUT * 1000)) {
+    while (ss.available() > 0) {
+      if (gps.encode(ss.read())) {
+        if (gps.location.isValid()) {
+          gpsReady = true;
+          break;
+        }
+      }
+    }
+    if (gpsReady) break;
+    Serial.print(".");
+    delay(1000);
+  }
+  
+  if (gpsReady) {
+    Serial.println("\nSeñal GPS obtenida!");
+  } else {
+    Serial.println("\nNo se pudo obtener señal GPS. Verifique la conexión y la antena.");
+  }
+}
+
+void loop() {
+  // Leer datos del GPS
+  while (ss.available() > 0) {
+    if (gps.encode(ss.read())) {
+      updateGPSData();
+    }
+  }
+  
+  // Manejar peticiones del cliente
+  server.handleClient();
+  delay(10);
+}
+
+void updateGPSData() {
+  if (gps.location.isValid()) {
+    latitud = gps.location.lat();
+    longitud = gps.location.lng();
+    
+    if (gps.altitude.isValid()) {
+      altitud = gps.altitude.meters();
+    }
+    
+    if (gps.satellites.isValid()) {
+      satelites = gps.satellites.value();
+    }
+    
+    if (gps.speed.isValid()) {
+      velocidad = gps.speed.kmph();
+    }
+    
+    if (gps.course.isValid()) {
+      curso = gps.course.deg();
+    }
+    
+    // Obtener fecha y hora
+    if (gps.date.isValid()) {
+      fecha = String(gps.date.day()) + "/" + String(gps.date.month()) + "/" + String(gps.date.year());
+    }
+    
+    if (gps.time.isValid()) {
+      hora = String(gps.time.hour()) + ":" + 
+             String(gps.time.minute()) + ":" + 
+             String(gps.time.second());
+    }
+    
+    printSerialData();
+  }
+}
+
+void printSerialData() {
+  Serial.println("\n--- Datos GPS Actualizados ---");
+  Serial.print("Latitud: ");
+  Serial.println(latitud, 6);
+  Serial.print("Longitud: ");
+  Serial.println(longitud, 6);
+  Serial.print("Altitud: ");
+  Serial.print(altitud);
+  Serial.println(" m");
+  Serial.print("Satélites: ");
+  Serial.println(satelites);
+  Serial.print("Velocidad: ");
+  Serial.print(velocidad);
+  Serial.println(" km/h");
+  Serial.print("Curso: ");
+  Serial.print(curso);
+  Serial.println("°");
+  Serial.print("Fecha: ");
+  Serial.println(fecha);
+  Serial.print("Hora: ");
+  Serial.println(hora);
+  Serial.println("---------------------------");
+}
+
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head><title>GPS en Tiempo Real</title>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+  html += "<meta http-equiv='refresh' content='5'>";
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; margin: 20px; }";
+  html += ".data-container { background: #f0f0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; }";
+  html += ".data-item { margin: 5px 0; }";
+  html += "#map { height: 400px; width: 100%; border-radius: 5px; }";
+  html += ".status { padding: 10px; border-radius: 5px; margin-bottom: 15px; }";
+  html += ".connected { background: #d4edda; color: #155724; }";
+  html += ".disconnected { background: #f8d7da; color: #721c24; }";
+  html += "</style>";
+  html += "</head><body>";
+  html += "<h1>GPS en Tiempo Real</h1>";
+  
+  // Estado de conexión GPS
+  html += "<div class='status " + String(gps.location.isValid() ? "connected" : "disconnected") + "'>";
+  html += "Estado GPS: " + String(gps.location.isValid() ? "CONECTADO (" + String(satelites) + " satélites)" : "SIN SEÑAL") + "";
+  html += "</div>";
+  
+  // Datos GPS
+  html += "<div class='data-container'>";
+  html += "<div class='data-item'><strong>Latitud:</strong> " + String(latitud, 6) + "</div>";
+  html += "<div class='data-item'><strong>Longitud:</strong> " + String(longitud, 6) + "</div>";
+  html += "<div class='data-item'><strong>Altitud:</strong> " + String(altitud) + " m</div>";
+  html += "<div class='data-item'><strong>Satélites:</strong> " + String(satelites) + "</div>";
+  html += "<div class='data-item'><strong>Velocidad:</strong> " + String(velocidad, 1) + " km/h</div>";
+  html += "<div class='data-item'><strong>Curso:</strong> " + String(curso, 1) + "°</div>";
+  html += "<div class='data-item'><strong>Fecha:</strong> " + fecha + "</div>";
+  html += "<div class='data-item'><strong>Hora (UTC):</strong> " + hora + "</div>";
+  html += "</div>";
+  
+  // Mapa
+  html += "<div id='map'></div>";
+  
+  // Scripts para el mapa
+  html += "<script>";
+  html += "function initMap() {";
+  html += "var myLatLng = {lat: " + String(latitud, 6) + ", lng: " + String(longitud, 6) + "};";
+  html += "var map = new google.maps.Map(document.getElementById('map'), {";
+  html += "zoom: 15,";
+  html += "center: myLatLng,";
+  html += "mapTypeId: 'hybrid'";
+  html += "});";
+  
+  html += "var marker = new google.maps.Marker({";
+  html += "position: myLatLng,";
+  html += "map: map,";
+  html += "title: 'Tu ubicación actual',";
+  html += "icon: {";
+  html += "path: google.maps.SymbolPath.CIRCLE,";
+  html += "scale: 10,";
+  html += "fillColor: '#4285F4',";
+  html += "fillOpacity: 1.0,";
+  html += "strokeWeight: 2,";
+  html += "strokeColor: '#FFFFFF'";
+  html += "}";
+  html += "});";
+  
+  // Línea de curso si hay movimiento
+  if (velocidad > 2.0) {
+    html += "var courseLine = new google.maps.Polyline({";
+    html += "path: [";
+    html += "myLatLng,";
+    html += "{lat: myLatLng.lat + Math.sin(" + String(curso * M_PI / 180) + ") * 0.01,";
+    html += " lng: myLatLng.lng + Math.cos(" + String(curso * M_PI / 180) + ") * 0.01}";
+    html += "],";
+    html += "geodesic: true,";
+    html += "strokeColor: '#FF0000',";
+    html += "strokeOpacity: 1.0,";
+    html += "strokeWeight: 2";
+    html += "});";
+    html += "courseLine.setMap(map);";
+  }
+  
+  html += "}";
+  html += "</script>";
+  html += "<script async defer src='https://maps.googleapis.com/maps/api/js?key=TU_API_DE_GOOGLE_MAPS&callback=initMap'></script>";
+  
+  html += "</body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
+void handleData() {
+  String data = "{";
+  data += "\"latitude\":" + String(latitud, 6) + ",";
+  data += "\"longitude\":" + String(longitud, 6) + ",";
+  data += "\"altitude\":" + String(altitud) + ",";
+  data += "\"satellites\":" + String(satelites) + ",";
+  data += "\"speed\":" + String(velocidad) + ",";
+  data += "\"course\":" + String(curso) + ",";
+  data += "\"date\":\"" + fecha + "\",";
+  data += "\"time\":\"" + hora + "\",";
+  data += "\"valid\":" + String(gps.location.isValid() ? "true" : "false");
+  data += "}";
+  
+  server.send(200, "application/json", data);
+}
+
+void handleMap() {
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<title>Mapa GPS</title>";
+  html += "<style>#map { height: 100vh; width: 100%; }</style>";
+  html += "</head><body>";
+  html += "<div id='map'></div>";
+  html += "<script>";
+  html += "function initMap() {";
+  html += "var myLatLng = {lat: " + String(latitud, 6) + ", lng: " + String(longitud, 6) + "};";
+  html += "var map = new google.maps.Map(document.getElementById('map'), {";
+  html += "zoom: 15,";
+  html += "center: myLatLng,";
+  html += "mapTypeId: 'hybrid'";
+  html += "});";
+  html += "new google.maps.Marker({position: myLatLng, map: map});";
+  html += "}";
+  html += "</script>";
+  html += "<script async defer src='https://maps.googleapis.com/maps/api/js?key=TU_API_DE_GOOGLE_MAPS&callback=initMap'></script>";
+  html += "</body></html>";
+  
+  server.send(200, "text/html", html);
+}
