@@ -4,8 +4,8 @@
 #include <TinyGPS++.h>
 
 // Configuración WiFi
-const char* ssid = "IZZI-4EBC";
-const char* password = "g3bKby2hpJ9yXxC6Pn";
+const char* ssid = "xxxxxxx";
+const char* password = "xxxxxx";
 
 // Crear servidor web en puerto 80
 ESP8266WebServer server(80);
